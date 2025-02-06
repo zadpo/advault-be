@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model Admin {
+  id        String   @id @default(uuid()) @map("_id")
+  username  String   @unique
+  email     String   @unique
+  password  String
+  firstName String?
+  lastName  String?
+  avatar    String?
+  bio       String?
+  phone     String?
+  role      String   @default("admin")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ads       Ad[]     // Ads uploaded by admin
+}
+
+model Client {
+  id          String       @id @default(uuid()) @map("_id")
+  username    String       @unique
+  email       String       @unique
+  password    String
+  companyName String
+  firstName   String?
+  lastName    String?
+  avatar      String?
+  bio         String?
+  phone       String?
+  role        String       @default("client")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  collections Collection[] // Client's collections
+}
+
+model Ad {
+  id                String         @id @default(uuid()) @map("_id")
+  advertiser        String         // Name of the advertiser
+  description       String?        // Description of the ad
+  commentaryComment String?        // Commentary comment
+  link              String?        // Link associated with the ad
+  logo              String?        // URL of the advertiser's logo
+  postImage         String?        // URL of the ad's image
+  isPosted          Boolean        @default(false) 
+  tags              String[]       // Add this line to include tags
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  admin             Admin          @relation(fields: [adminId], references: [id])
+  adminId           String
+  collections       AdCollection[] // Explicit many-to-many relationship
+}
+
+model Collection {
+  id          String         @id @default(uuid()) @map("_id")
+  name        String
+  description String?
+  client      Client         @relation(fields: [clientId], references: [id])
+  clientId    String
+  ads         AdCollection[] // Explicit many-to-many relationship
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+// Join table for many-to-many relationship between Ad and Collection
+model AdCollection {
+  id           String     @id @default(uuid()) @map("_id")
+  ad           Ad         @relation(fields: [adId], references: [id])
+  adId         String
+  collection   Collection @relation(fields: [collectionId], references: [id])
+  collectionId String
+}

@@ -1,0 +1,30 @@
+{
+  "name": "advault-be",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@prisma/client": "^6.3.0",
+    "apify": "^3.2.6",
+    "apify-client": "^2.12.0",
+    "axios": "^1.7.9",
+    "bcryptjs": "^2.4.3",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "crawlee": "^3.12.2",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.13.0",
+    "multer": "^1.4.5-lts.1",
+    "node-fetch": "^3.3.2",
+    "prisma": "^6.3.0",
+    "puppeteer": "^24.1.1",
+    "uuid": "^11.0.5"
+  }
+}

@@ -383,9 +383,9 @@ app.post("/api/auth/admin/signin", async (req, res) => {
 
 // Client signup endpoint
 app.post("/api/auth/client/signup", async (req, res) => {
-  const { email, password, username, companyName } = req.body;
+  const { email, password, username, firstName, lastName, companyName } = req.body;
 
-  if (!email || !password || !username || !companyName) {
+  if (!email || !password || !username || !firstName || !lastName || !companyName) {
     return res.status(400).json({ message: "All fields are required" });
   }
 
@@ -411,6 +411,8 @@ app.post("/api/auth/client/signup", async (req, res) => {
       data: {
         email,
         username,
+        firstName,
+        lastName,
         password: hashedPassword,
         companyName,
         role: "client",
@@ -519,48 +521,90 @@ app.put("/api/auth/client/update-profile", authenticateToken, async (req, res) =
 });
 
 // New endpoint for scraping LinkedIn ads
-app.get('/scrape', async (req, res) => {
-    const browser = await puppeteer.launch({ headless: true }); // Run in headless mode
-    const page = await browser.newPage();
+app.get("/scrape", async (req, res) => {
+  const browser = await puppeteer.launch({ 
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  })
+  const page = await browser.newPage()
 
-    // Navigate to LinkedIn Ad Library
-    await page.goto('https://www.linkedin.com/ad-library/home');
+  try {
+    await page.goto("https://www.linkedin.com/ad-library/home", { waitUntil: "networkidle0" })
+    await page.waitForSelector("#search-form")
 
-    // Wait for the search form to load
-    await page.waitForSelector('#search-form');
+    const companyName = req.query.company || "Your Company Name"
+    await page.type('input[name="accountOwner"]', companyName)
+    await page.click("#search-form-submit")
 
-    // Input search criteria
-    const companyName = req.query.company || 'Your Company Name'; // Get company name from query parameter
-    await page.type('input[name="accountOwner"]', companyName);
-    
-    // Click the search button
-    await page.click('#search-form-submit');
+    await page.waitForSelector(".base-ad-preview-card", { timeout: 30000 })
 
-    // Wait for results to load
-    await page.waitForSelector('.base-ad-preview-card', { timeout: 10000 }); // Wait for ad cards to load
+    // Scroll to load all ads
+    await autoScroll(page)
 
-    // Scrape the results
+    // Add debugging to see the HTML structure
     const ads = await page.evaluate(() => {
-        const adElements = document.querySelectorAll('.base-ad-preview-card'); // Adjust selector based on actual structure
-        console.log(`Found ${adElements.length} ad elements`); // Log the number of ad elements found
-        return Array.from(adElements).map(ad => ({
-            advertiser: ad.querySelector('div.flex.flex-col.self-center > div > div')?.innerText, // Advertiser name
-            description: ad.querySelector('.sponsored-content-headline h2')?.innerText, // Ad description
-            link: ad.querySelector('a[data-tracking-control-name="ad_library_ad_preview_video_thumbnail_image"]')?.href, // Link to ad details
-            commentaryComment: ad.querySelector('.commentary__container ')?.innerText,
-            logo: ad.querySelector('img[alt="advertiser logo"]')?.src, // Logo image
-            postImage: ad.querySelector('.ad-preview__dynamic-dimensions-image')?.src // Post image
-        }));
+      const adElements = document.querySelectorAll(".base-ad-preview-card")
+      return Array.from(adElements).map((ad) => {
+        // Debug logging
+        const debugInfo = {
+          html: ad.innerHTML,
+          links: Array.from(ad.querySelectorAll('a')).map(a => ({
+            href: a.href,
+            className: a.className,
+            text: a.textContent
+          })),
+          description: ad.querySelector(".sponsored-content-headline h2")?.textContent,
+        };
+        console.log('Debug info for ad:', debugInfo);
+
+        const adData = {
+          advertiser: ad.querySelector("div.flex.flex-col.self-center > div > div")?.textContent?.trim(),
+          description: ad.querySelector(".sponsored-content-headline h2")?.textContent?.trim(),
+          link: ad.querySelector('.base-card__full-link')?.href || 
+                ad.querySelector('a[data-tracking-control-name="ad_library_ad_preview_card"]')?.href ||
+                ad.querySelector('a')?.href, // fallback to first link if others not found
+          logo: ad.querySelector('img[alt="advertiser logo"]')?.src,
+          postImage: ad.querySelector(".ad-preview__dynamic-dimensions-image")?.src,
+        };
+
+        // Log the extracted data
+        console.log('Extracted ad data:', adData);
+        
+        // Filter out undefined values
+        return Object.fromEntries(
+          Object.entries(adData).filter(([_, v]) => v != null)
+        );
+      });
     });
 
-    // Log the scraped ads
-    console.log(ads);
-
-    // Send the scraped ads as a response
+    console.log(`Scraped ${ads.length} ads with data:`, ads);
     res.json(ads);
+  } catch (error) {
+    console.error("Scraping failed:", error)
+    res.status(500).json({ error: "Scraping failed", details: error.message })
+  } finally {
+    await browser.close()
+  }
+})
 
-    await browser.close();
-});
+async function autoScroll(page) {
+  await page.evaluate(async () => {
+    await new Promise((resolve) => {
+      let totalHeight = 0
+      const distance = 100
+      const timer = setInterval(() => {
+        const scrollHeight = document.body.scrollHeight
+        window.scrollBy(0, distance)
+        totalHeight += distance
+
+        if (totalHeight >= scrollHeight) {
+          clearInterval(timer)
+          resolve()
+        }
+      }, 100)
+    })
+  })
+}
 
 // New endpoint to save an ad
 app.post("/api/save-ad", authenticateToken, async (req, res) => {
@@ -633,12 +677,15 @@ app.post("/api/post-ad", authenticateToken, async (req, res) => {
 })
 
 // Get posted ads
-app.get("/api/posted-ads", authenticateToken, async (req, res) => {
+app.get("/api/posted-ads", async (req, res) => {
   try {
     const postedAds = await prisma.ad.findMany({
       where: {
         isPosted: true,
       },
+      orderBy: {
+        createdAt: 'desc' // Show newest ads first
+      }
     })
     res.status(200).json(postedAds)
   } catch (error) {
@@ -667,66 +714,35 @@ app.get("/api/admin/posted-ads", authenticateToken, async (req, res) => {
 });
 
 app.delete("/api/delete-ad/:id", authenticateToken, async (req, res) => {
-  const { id } = req.params
+  const { id } = req.params;
 
   try {
+    // First delete all SavedAd records that reference this ad
+    await prisma.savedAd.deleteMany({
+      where: { adId: id },
+    });
+
+    // Then delete all AdCollection records that reference this ad
+    await prisma.adCollection.deleteMany({
+      where: { adId: id },
+    });
+
+    // Finally delete the ad itself
     const deletedAd = await prisma.ad.delete({
       where: { id },
-    })
+    });
 
     if (!deletedAd) {
-      return res.status(404).json({ message: "Ad not found" })
+      return res.status(404).json({ message: "Ad not found" });
     }
 
-    res.status(200).json({ message: "Ad deleted successfully", ad: deletedAd })
+    res.status(200).json({ message: "Ad deleted successfully", ad: deletedAd });
   } catch (error) {
-    console.error("Error deleting ad:", error)
-    res.status(500).json({ message: "Error deleting ad", error: error.message })
+    console.error("Error deleting ad:", error);
+    res.status(500).json({ message: "Error deleting ad", error: error.message });
   }
-})
+});
 
-// Create a new collection
-app.post("/api/collections", authenticateToken, async (req, res) => {
-  if (req.user.role !== "client") {
-    return res.status(403).json({ message: "Unauthorized. Client access only." })
-  }
-
-  const { name, description } = req.body
-
-  try {
-    const newCollection = await prisma.collection.create({
-      data: {
-        name,
-        description,
-        client: { connect: { id: req.user.id } },
-      },
-    })
-
-    res.status(201).json(newCollection)
-  } catch (error) {
-    console.error("Error creating collection:", error)
-    res.status(500).json({ message: "Error creating collection", error: error.message })
-  }
-})
-
-// Get all collections for a client
-app.get("/api/collections", authenticateToken, async (req, res) => {
-  if (req.user.role !== "client") {
-    return res.status(403).json({ message: "Unauthorized. Client access only." })
-  }
-
-  try {
-    const collections = await prisma.collection.findMany({
-      where: { clientId: req.user.id },
-      include: { _count: { select: { ads: true } } },
-    })
-
-    res.status(200).json(collections)
-  } catch (error) {
-    console.error("Error fetching collections:", error)
-    res.status(500).json({ message: "Error fetching collections", error: error.message })
-  }
-})
 
 // Save ad to collection
 app.post("/api/save-to-collection", authenticateToken, async (req, res) => {
@@ -734,24 +750,28 @@ app.post("/api/save-to-collection", authenticateToken, async (req, res) => {
     return res.status(403).json({ message: "Unauthorized. Client access only." });
   }
 
-  const { adId, collectionId } = req.body;
+  const { adId, folderId } = req.body;
 
-  if (!adId || !collectionId) {
-    return res.status(400).json({ message: "Both adId and collectionId are required." });
+  if (!adId || !folderId) {
+    return res.status(400).json({ message: "adId and folderId are required." });
   }
 
   try {
-    const savedAd = await prisma.adCollection.create({
+    const savedAd = await prisma.savedAd.create({
       data: {
+        client: { connect: { id: req.user.id } },
         ad: { connect: { id: adId } },
-        collection: { connect: { id: collectionId } },
+        folder: { connect: { id: folderId } },
       },
     });
 
-    res.status(200).json({ message: "Ad saved to collection successfully", savedAd });
+    res.status(200).json({ message: "Ad saved successfully", savedAd });
   } catch (error) {
-    console.error("Error saving ad to collection:", error);
-    res.status(500).json({ message: "Error saving ad to collection", error: error.message });
+    if (error.code === "P2002") {
+      return res.status(409).json({ message: "This ad is already saved by the client." });
+    }
+    console.error("Error saving ad:", error);
+    res.status(500).json({ message: "Error saving ad", error: error.message });
   }
 });
 
@@ -784,6 +804,123 @@ app.get("/api/collections/:collectionId/ads", authenticateToken, async (req, res
   }
 })
 
+// New endpoint to get saved ads under /api/collections
+app.get("/api/collections", authenticateToken, async (req, res) => {
+  if (req.user.role !== "client") {
+    return res.status(403).json({ message: "Unauthorized. Client access only." });
+  }
+
+  try {
+    const savedAds = await prisma.savedAd.findMany({
+      where: { clientId: req.user.id },
+      include: { ad: true }, // Include ad details
+    });
+    res.status(200).json(savedAds);
+  } catch (error) {
+    console.error("Error fetching saved ads:", error);
+    res.status(500).json({ message: "Error fetching saved ads", error: error.message });
+  }
+});
+
+// Add this endpoint to handle video proxying
+app.get('/api/proxy-video', async (req, res) => {
+  try {
+    const videoUrl = req.query.url;
+    if (!videoUrl) {
+      return res.status(400).json({ error: 'Video URL is required' });
+    }
+
+    const response = await axios({
+      method: 'get',
+      url: videoUrl,
+      responseType: 'stream',
+      headers: {
+        'Referer': 'https://www.linkedin.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+
+    // Forward the content type header
+    res.setHeader('Content-Type', response.headers['content-type']);
+    
+    // Pipe the video stream to the response
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('Error proxying video:', error);
+    res.status(500).json({ error: 'Failed to proxy video' });
+  }
+});
+
+app.post("/api/folders", authenticateToken, async (req, res) => {
+  if (req.user.role !== "client") {
+    return res.status(403).json({ message: "Unauthorized. Client access only." })
+  }
+
+  const { name, description } = req.body
+
+  if (!name) {
+    return res.status(400).json({ message: "Folder name is required." })
+  }
+
+  try {
+    const newFolder = await prisma.folder.create({
+      data: {
+        name,
+        description,
+        client: { connect: { id: req.user.id } },
+      },
+    })
+
+    res.status(201).json({ message: "Folder created successfully", folder: newFolder })
+  } catch (error) {
+    console.error("Error creating folder:", error)
+    res.status(500).json({ message: "Error creating folder", error: error.message })
+  }
+})
+
+app.get("/api/folders", authenticateToken, async (req, res) => {
+  if (req.user.role !== "client") {
+    return res.status(403).json({ message: "Unauthorized. Client access only." })
+  }
+
+  try {
+    const folders = await prisma.folder.findMany({
+      where: { clientId: req.user.id },
+      include: { collections: true },
+    })
+
+    res.status(200).json(folders)
+  } catch (error) {
+    console.error("Error fetching folders:", error)
+    res.status(500).json({ message: "Error fetching folders", error: error.message })
+  }
+})
+
+// Add this endpoint to get ads for a specific folder
+app.get("/api/folders/:folderId/ads", authenticateToken, async (req, res) => {
+  if (req.user.role !== "client") {
+    return res.status(403).json({ message: "Unauthorized. Client access only." });
+  }
+
+  const { folderId } = req.params;
+
+  try {
+    const savedAds = await prisma.savedAd.findMany({
+      where: {
+        folderId,
+        clientId: req.user.id,
+      },
+      include: {
+        ad: true, // Include the full ad details
+      },
+    });
+
+    res.status(200).json(savedAds);
+  } catch (error) {
+    console.error("Error fetching folder contents:", error);
+    res.status(500).json({ message: "Error fetching folder contents", error: error.message });
+  }
+});
 
 const PORT = process.env.PORT || 5000
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))

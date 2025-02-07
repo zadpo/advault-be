@@ -25,8 +25,11 @@ const client = new ApifyClient({
 app.use(express.json())
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
-    credentials: true,
+    origin: [
+      'https://advault-fe.vercel.app',
+      'http://localhost:3000'  // for local development
+    ],
+    credentials: true
   }),
 )
 
@@ -199,6 +202,7 @@ function authenticateToken(req, res, next) {
 app.post("/api/upload-avatar", authenticateToken, upload.single('avatar'), async (req, res) => {
   try {
     if (!req.file) {
+      console.error("No file uploaded:", req.file); // Log if no file is uploaded
       return res.status(400).json({ message: "No file uploaded" });
     }
 
@@ -521,10 +525,29 @@ app.put("/api/auth/client/update-profile", authenticateToken, async (req, res) =
 });
 
 // New endpoint for scraping LinkedIn ads
+const autoScroll = async (page) => {
+  await page.evaluate(async () => {
+    await new Promise((resolve, reject) => {
+      let totalHeight = 0
+      const distance = 100
+      const timer = setInterval(() => {
+        const scrollHeight = document.body.scrollHeight
+        window.scrollBy(0, distance)
+        totalHeight += distance
+
+        if (totalHeight >= scrollHeight) {
+          clearInterval(timer)
+          resolve()
+        }
+      }, 100)
+    })
+  })
+}
+
 app.get("/scrape", async (req, res) => {
-  const browser = await puppeteer.launch({ 
+  const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
   })
   const page = await browser.newPage()
 
@@ -541,44 +564,61 @@ app.get("/scrape", async (req, res) => {
     // Scroll to load all ads
     await autoScroll(page)
 
-    // Add debugging to see the HTML structure
     const ads = await page.evaluate(() => {
       const adElements = document.querySelectorAll(".base-ad-preview-card")
       return Array.from(adElements).map((ad) => {
-        // Debug logging
-        const debugInfo = {
-          html: ad.innerHTML,
-          links: Array.from(ad.querySelectorAll('a')).map(a => ({
-            href: a.href,
-            className: a.className,
-            text: a.textContent
-          })),
-          description: ad.querySelector(".sponsored-content-headline h2")?.textContent,
-        };
-        console.log('Debug info for ad:', debugInfo);
+        const isCarousel = ad.classList.contains("sponsored-update-carousel-preview")
+        const postImages = []
+
+        if (isCarousel) {
+          // For carousel ads, we need to click through all images
+          const nextButton = ad.querySelector(".sponsored-update-carousel-preview__nav-button--next")
+          const carouselItems = ad.querySelectorAll(".ad-preview__dynamic-dimensions-image")
+
+          carouselItems.forEach((item) => {
+            const src = item.src
+            if (src && src.trim() !== "" && !postImages.includes(src)) {
+              postImages.push(src)
+            }
+          })
+
+          // Click through the carousel to reveal all images
+          let clickCount = 0
+          while (nextButton && clickCount < 10) {
+            // Limit to 10 clicks to avoid infinite loop
+            nextButton.click()
+            carouselItems.forEach((item) => {
+              const src = item.src
+              if (src && src.trim() !== "" && !postImages.includes(src)) {
+                postImages.push(src)
+              }
+            })
+            clickCount++
+          }
+        } else {
+          const singleImage = ad.querySelector(".ad-preview__dynamic-dimensions-image")?.src
+          if (singleImage && singleImage.trim() !== "") {
+            postImages.push(singleImage)
+          }
+        }
 
         const adData = {
           advertiser: ad.querySelector("div.flex.flex-col.self-center > div > div")?.textContent?.trim(),
           description: ad.querySelector(".sponsored-content-headline h2")?.textContent?.trim(),
-          link: ad.querySelector('.base-card__full-link')?.href || 
-                ad.querySelector('a[data-tracking-control-name="ad_library_ad_preview_card"]')?.href ||
-                ad.querySelector('a')?.href, // fallback to first link if others not found
+          link:
+            ad.querySelector(".base-card__full-link")?.href ||
+            ad.querySelector('a[data-tracking-control-name="ad_library_ad_preview_card"]')?.href ||
+            ad.querySelector("a")?.href,
           logo: ad.querySelector('img[alt="advertiser logo"]')?.src,
-          postImage: ad.querySelector(".ad-preview__dynamic-dimensions-image")?.src,
-        };
+          postImage: postImages.length > 0 ? postImages : null,
+        }
 
-        // Log the extracted data
-        console.log('Extracted ad data:', adData);
-        
-        // Filter out undefined values
-        return Object.fromEntries(
-          Object.entries(adData).filter(([_, v]) => v != null)
-        );
-      });
-    });
+        return Object.fromEntries(Object.entries(adData).filter(([_, v]) => v != null && v !== ""))
+      })
+    })
 
-    console.log(`Scraped ${ads.length} ads with data:`, ads);
-    res.json(ads);
+    console.log(`Scraped ${ads.length} ads with data:`, ads)
+    res.json(ads)
   } catch (error) {
     console.error("Scraping failed:", error)
     res.status(500).json({ error: "Scraping failed", details: error.message })
@@ -587,24 +627,24 @@ app.get("/scrape", async (req, res) => {
   }
 })
 
-async function autoScroll(page) {
-  await page.evaluate(async () => {
-    await new Promise((resolve) => {
-      let totalHeight = 0
-      const distance = 100
-      const timer = setInterval(() => {
-        const scrollHeight = document.body.scrollHeight
-        window.scrollBy(0, distance)
-        totalHeight += distance
+// async function autoScroll(page) {
+//   await page.evaluate(async () => {
+//     await new Promise((resolve) => {
+//       let totalHeight = 0
+//       const distance = 100
+//       const timer = setInterval(() => {
+//         const scrollHeight = document.body.scrollHeight
+//         window.scrollBy(0, distance)
+//         totalHeight += distance
 
-        if (totalHeight >= scrollHeight) {
-          clearInterval(timer)
-          resolve()
-        }
-      }, 100)
-    })
-  })
-}
+//         if (totalHeight >= scrollHeight) {
+//           clearInterval(timer)
+//           resolve()
+//         }
+//       }, 100)
+//     })
+//   })
+// }
 
 // New endpoint to save an ad
 app.post("/api/save-ad", authenticateToken, async (req, res) => {
@@ -924,3 +964,6 @@ app.get("/api/folders/:folderId/ads", authenticateToken, async (req, res) => {
 
 const PORT = process.env.PORT || 5000
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
+
+// For Vercel, you might need to export the app
+module.exports = app;

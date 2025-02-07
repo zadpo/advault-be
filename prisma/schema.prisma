@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-1.0.x"]
 }
 
 datasource db {
@@ -38,6 +39,9 @@ model Client {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   collections Collection[] // Client's collections
+  savedAds    SavedAd[] // Client's saved ads
+  folders     Folder[]
+
 }
 
 model Ad {
@@ -55,6 +59,7 @@ model Ad {
   admin             Admin          @relation(fields: [adminId], references: [id])
   adminId           String
   collections       AdCollection[] // Explicit many-to-many relationship
+  savedBy           SavedAd[]      // Clients who saved this ad
 }
 
 model Collection {
@@ -63,16 +68,45 @@ model Collection {
   description String?
   client      Client         @relation(fields: [clientId], references: [id])
   clientId    String
-  ads         AdCollection[] // Explicit many-to-many relationship
+  folder      Folder?        @relation(fields: [folderId], references: [id])
+  folderId    String?
+  ads         AdCollection[]
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 }
 
 // Join table for many-to-many relationship between Ad and Collection
 model AdCollection {
-  id           String     @id @default(uuid()) @map("_id")
-  ad           Ad         @relation(fields: [adId], references: [id])
-  adId         String
-  collection   Collection @relation(fields: [collectionId], references: [id])
+  id          String   @id @default(uuid()) @map("_id")
+  ad          Ad       @relation(fields: [adId], references: [id])
+  adId        String
+  collection  Collection @relation(fields: [collectionId], references: [id])
   collectionId String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model SavedAd {
+  id        String   @id @default(uuid()) @map("_id")
+  client    Client   @relation(fields: [clientId], references: [id])
+  clientId  String
+  ad        Ad       @relation(fields: [adId], references: [id])
+  adId      String
+  folder    Folder?  @relation(fields: [folderId], references: [id])
+  folderId  String?
+  createdAt DateTime @default(now())
+
+  @@unique([clientId, adId])
+}
+
+model Folder {
+  id          String       @id @default(uuid()) @map("_id")
+  name        String
+  description String?
+  client      Client       @relation(fields: [clientId], references: [id])
+  clientId    String
+  collections Collection[]
+  savedAds    SavedAd[]    // Add this relation
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 }

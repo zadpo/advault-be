@@ -605,6 +605,7 @@ app.get("/scrape", async (req, res) => {
         const adData = {
           advertiser: ad.querySelector("div.flex.flex-col.self-center > div > div")?.textContent?.trim(),
           description: ad.querySelector(".sponsored-content-headline h2")?.textContent?.trim(),
+          commentaryComment: ad.querySelector(".commentary__content")?.textContent?.trim(),
           link:
             ad.querySelector(".base-card__full-link")?.href ||
             ad.querySelector('a[data-tracking-control-name="ad_library_ad_preview_card"]')?.href ||

@@ -51,7 +51,7 @@ model Ad {
   commentaryComment String?        // Commentary comment
   link              String?        // Link associated with the ad
   logo              String?        // URL of the advertiser's logo
-  postImage         String[]        // URL of the ad's image
+  postImage         String[]       // Ensure this is an array of strings
   isPosted          Boolean        @default(false) 
   tags              String[]       // Add this line to include tags
   createdAt         DateTime       @default(now())

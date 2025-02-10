@@ -27,9 +27,12 @@ app.use(
   cors({
     origin: [
       'https://advault-fe.vercel.app',
-      'http://localhost:3000'  // for local development
+      'http://localhost:3000',
+      'chrome-extension://bnphnlfhgdbneoaadkhpekjnbaeegahf' // Add your extension ID here
     ],
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE'], // Specify allowed methods
+    allowedHeaders: ['Content-Type', 'Authorization'], // Specify allowed headers
   }),
 )
 
@@ -648,9 +651,9 @@ app.get("/scrape", async (req, res) => {
 
 // New endpoint to save an ad
 app.post("/api/save-ad", authenticateToken, async (req, res) => {
-  const { advertiser, commentaryComment, description, link, logo, postImage } = req.body
+  const { advertiser, commentaryComment, description, link, logo, postImage } = req.body;
 
-  console.log("Incoming ad data:", req.body) // Log the incoming data
+  console.log("Incoming ad data:", req.body); // Log the incoming data
 
   try {
     const newAd = await prisma.ad.create({
@@ -660,18 +663,18 @@ app.post("/api/save-ad", authenticateToken, async (req, res) => {
         commentaryComment,
         link,
         logo,
-        postImage,
+        postImage: Array.isArray(postImage) ? postImage : [postImage], // Ensure postImage is an array
         admin: {
           connect: { id: req.user.id }, // Connect the ad to the authenticated admin
         },
       },
-    })
-    res.status(201).json(newAd)
+    });
+    res.status(201).json(newAd);
   } catch (error) {
-    console.error("Error saving ad:", error) // Log the error
-    res.status(500).json({ message: "Error saving ad", error: error.message })
+    console.error("Error saving ad:", error); // Log the error
+    res.status(500).json({ message: "Error saving ad", error: error.message });
   }
-})
+});
 
 // New endpoint to get saved ads
 app.get("/api/saved-ads", async (req, res) => {
